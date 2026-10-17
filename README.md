@@ -19,3 +19,5 @@ May upgrade from instacomposer 2 to 4
 Inspired by https://www.waproduction.com/plugins/view/instacomposer-4 
 
 Still not even close to its capabilities :)
+
+No reverse engineering of instacomposer was done to make this plugin just in case you are wondering.
