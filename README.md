@@ -21,3 +21,6 @@ Inspired by https://www.waproduction.com/plugins/view/instacomposer-4
 Still not even close to its capabilities :)
 
 No reverse engineering of instacomposer was done to make this plugin just in case you are wondering.
+
+
+This is still a little akward on some of the note interfaces but its a nice start to more of a piano roll like interface with right click functionality for other uses.  I should see if I can get fl py working with it, maybe pianoroll scripts can be bridged into this plugin also???
