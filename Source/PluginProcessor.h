@@ -1,0 +1,152 @@
+#pragma once
+// PluginProcessor.h - parameters, state, scenes and host-synced MIDI playback.
+//
+// Threading contract
+//   message thread : generation, editing, scene switching, state save/load, publishing playback tables
+//   audio thread   : reads immutable Playback tables through atomic pointers. No locks, no allocation
+//                    (apart from MidiBuffer growth inside the host's own buffer), no parameter writes.
+
+#include "Engine.h"
+#include "Storage.h"
+
+#include <juce_audio_processors/juce_audio_processors.h>
+
+#include <atomic>
+#include <memory>
+#include <vector>
+
+namespace icc
+{
+
+namespace ids
+{
+    constexpr const char* root       = "rootNote";
+    constexpr const char* scale      = "scaleIndex";
+    constexpr const char* progression = "progressionIndex";
+    constexpr const char* bpm        = "bpm";
+    constexpr const char* bars       = "bars";
+    constexpr const char* seed       = "seed";
+    constexpr const char* foliage    = "foliageDensity";
+    constexpr const char* snapScale  = "snapScaleEnabled";
+    inline juce::String channel (int t) { return "channel_" + juce::String (t); }
+    inline juce::String mute    (int t) { return "mute_"    + juce::String (t); }
+    inline juce::String solo    (int t) { return "solo_"    + juce::String (t); }
+}
+
+class Processor final : public juce::AudioProcessor,
+                        private juce::AudioProcessorValueTreeState::Listener,
+                        private juce::Timer
+{
+public:
+    Processor();
+    ~Processor() override;
+
+    // ---- AudioProcessor ----
+    void prepareToPlay (double sampleRate, int samplesPerBlock) override;
+    void releaseResources() override {}
+    bool isBusesLayoutSupported (const BusesLayout&) const override;
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    using AudioProcessor::processBlock;
+
+    juce::AudioProcessorEditor* createEditor() override;
+    bool hasEditor() const override { return true; }
+    const juce::String getName() const override { return "InstaComposerClone"; }
+    bool acceptsMidi() const override  { return true; }
+    bool producesMidi() const override { return true; }
+    bool isMidiEffect() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock&) override;
+    void setStateInformation (const void*, int) override;
+
+    // ---- message-thread API used by the editor ----
+    juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return apvts; }
+
+    GenParams paramsFromState() const;
+    Routing   routingFromState() const;
+    double    bpmFromState() const;
+    int       barsFromState() const;
+
+    void generate();                     // regenerate from the current parameters into the active scene
+    void randomizeSeed();
+    Pattern getPattern() const;
+    void    setPattern (Pattern);        // editor commits (piano roll); stored into the active scene
+    uint32_t getPatternVersion() const noexcept { return patternVersion.load(); }   // bumps when content changes behind the editor's back
+
+    void selectScene (int index);        // quantised to the next bar line while the transport runs
+    int  getActiveScene() const noexcept { return activeScene.load(); }
+    int  getPendingScene() const noexcept { return pendingScene.load(); }
+    bool isScenePopulated (int index) const;
+
+    void setPreviewPlaying (bool);       // free-running internal clock for hosts that are stopped / standalone
+    bool isPreviewPlaying() const noexcept { return previewPlaying.load(); }
+    bool isTransportRunning() const noexcept { return transportRunning.load(); }
+    double getPlayheadTick() const noexcept { return playheadTick.load(); }   // loop-relative
+
+    std::vector<uint8_t> renderMidiFile (bool respectMuteSolo) const;
+
+private:
+    static juce::AudioProcessorValueTreeState::ParameterLayout makeLayout();
+    void parameterChanged (const juce::String&, float) override;
+    void timerCallback() override;
+
+    void publish (int sceneTag, bool quantised);          // message thread: build + hand a table to the audio thread
+    void captureActiveScene();                            // snapshot live state into the active scene (dataLock held)
+    void applySceneToParameters (const Scene&);           // message thread, dataLock NOT held
+    void setParam (const juce::String& id, float plainValue);
+    void pruneTables();
+
+    // audio-thread helpers
+    void releaseAll (juce::MidiBuffer&, int offset);
+    void releaseTrack (juce::MidiBuffer&, int track, int offset);
+    void renderRange (const Playback&, double a, double b, double blockStart, double ticksPerSample,
+                      int numSamples, juce::MidiBuffer&);
+    void handleEvent (const Playback&, const PlaybackEvent&, int offset, juce::MidiBuffer&);
+
+    juce::AudioProcessorValueTreeState apvts;
+    std::atomic<float>* bpmParam = nullptr;
+
+    // message-thread data, guarded by dataLock (state calls may arrive from other threads)
+    mutable juce::CriticalSection dataLock;
+    Pattern    pattern;
+    GenParams  lastParams;
+    SceneBank  scenes;
+
+    struct Owned { std::unique_ptr<Playback> table; double lastActive; };
+    std::vector<Owned> owned;
+
+    std::atomic<int>      activeScene { 0 };
+    std::atomic<int>      pendingScene { -1 };
+    std::atomic<uint32_t> patternVersion { 0 };
+    std::atomic<bool>     paramsDirty { false };
+    std::atomic<bool>     loading { false };
+    std::atomic<bool>     previewPlaying { false };
+
+    // lock-free hand-off to the audio thread
+    std::atomic<const Playback*> current { nullptr };
+    std::atomic<const Playback*> pendingTable { nullptr };
+    std::atomic<int>             appliedSignal { -1 };
+    std::atomic<bool>            transportRunning { false };
+    std::atomic<double>          playheadTick { 0.0 };
+
+    // audio-thread-only state
+    enum class Source { Stopped, Host, Internal };
+    Source          lastSource = Source::Stopped;
+    const Playback* lastTable = nullptr;
+    double          origin = 0.0;          // pattern restarts here (set when a scene switch lands)
+    double          currentRate = 0.0;     // written in prepareToPlay (never concurrently with processBlock)
+    double          internalTick = 0.0;
+    double          expectedTick = 0.0;
+    bool            haveExpected = false;
+    std::array<std::array<signed char, 128>, kNumTracks> onChannel {};   // 0 = silent, else channel the note-on used
+    std::array<int, kNumTracks> soundingCount {};
+    int             totalSounding = 0;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Processor)
+};
+
+} // namespace icc
