@@ -14,3 +14,8 @@ transfer midi data from a plugin to a daw.
 There are tons of things that can be added to this. 
 Somewhat of a novelty for me as instacomposer 4  is on sale for $30 early release currently and likely a much better deal
 May upgrade from instacomposer 2 to 4 
+
+
+Inspired by https://www.waproduction.com/plugins/view/instacomposer-4 
+
+Still not even close to its capabilities :)
