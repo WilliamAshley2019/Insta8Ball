@@ -3,7 +3,8 @@ mild theory and fl studio tiein updates still in building still havn't finished 
 I am currently sort of focusing on theory improvements which is sort of going to need to be experiemnting I wanted to add more 
 drum capability, particularly with loading kits direct from midi in fl studio its still not working but started to put that in.
 (Although I am just a little impressed with what this thing is coming up with.... I actually liked the first two things this put out ... out of two well
-well if life hands you lemons dream of other yellow things) cause everyone loves the golden things, golden hair flaxen and playen wax.
+well if life hands you lemons dream of other yellow things) cause everyone loves the golden things, golden hair flaxen and playen wax. More to come. :) 
+Well unless the end arrives first :)
 
 
 
