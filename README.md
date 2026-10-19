@@ -8,7 +8,7 @@ drum capability, particularly with loading kits direct from midi in fl studio it
 
 
 
-This is NOT instacomposer!!!!!
+This is NOT instacomposer!!!!!   (Instacomposer is still way better than this and likely will remain that way :)
 
 This project was inspired by instacomposer and othe programs that can transfer midi data from a plugin to the daw.
 
