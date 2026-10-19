@@ -1,3 +1,13 @@
+10-18-2026 how time flies
+mild theory and fl studio tiein updates still in building still havn't finished building but just updating as it has improved alittle
+I am currently sort of focusing on theory improvements which is sort of going to need to be experiemnting I wanted to add more 
+drum capability, particularly with loading kits direct from midi in fl studio its still not working but started to put that in.
+
+
+
+
+
+
 This is NOT instacomposer!!!!!
 
 This project was inspired by instacomposer and othe programs that can transfer midi data from a plugin to the daw.
