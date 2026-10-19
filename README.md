@@ -7,7 +7,8 @@ well if life hands you lemons dream of other yellow things) cause everyone loves
 Well unless the end arrives first :)
 
 
-
+TO DO - get it to take midi inputs and theorize that input to the transmutation genre extenstion etc.. if possible get midi to feed into from channels... fl studio pianno roll etc.. would likely 
+be doable via ara but maybe I can figure something out.
 
 
 This is NOT instacomposer!!!!!   (Instacomposer is still way better than this and likely will remain that way :)
