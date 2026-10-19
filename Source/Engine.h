@@ -2,6 +2,7 @@
 // Engine.h - JUCE-free generation + data model: notes, patterns, generators, playback tables,
 // pattern (de)serialisation and a standard MIDI file writer.
 
+#include "Mapping.h"
 #include "Theory.h"
 
 #include <array>
@@ -54,10 +55,18 @@ struct GenParams
     int      bars             = 4;
     uint32_t seed             = 12345;
     float    foliageDensity   = 0.35f;
+    int      drumStyle        = -1;      // -1 = chosen by the seed; otherwise an index into the drum style list
+    float    drumComplexity   = 0.5f;    // 0..1
+    float    swing            = 0.0f;    // 0..1, added on top of the style's own swing
+    float    humanize         = 0.3f;    // 0..1
+    float    fills            = 0.5f;    // 0..1
+    int      candidates       = 1;       // best-of-N (used by generateBest, ignored by generatePattern)
 };
 
-/** Pure function of its inputs: same params -> identical Pattern, on any machine. */
-Pattern generatePattern (const GenParams&);
+/** Pure function of its inputs: same params -> identical Pattern, on any machine.
+    Tracks whose bit is set in `lockMask` are copied from `locked` instead of being generated; the other
+    tracks still line up with them (bass and melody follow locked drums, foliage follows a locked melody). */
+Pattern generatePattern (const GenParams&, const Pattern* locked = nullptr, uint32_t lockMask = 0);
 
 // ---- Routing and playback tables ----
 struct Routing
@@ -65,6 +74,8 @@ struct Routing
     uint32_t mute = 0;                   // bit i = track i muted
     uint32_t solo = 0;                   // bit i = track i soloed
     std::array<int, kNumTracks> channels = kDefaultChannels;   // 1..16
+    std::array<int, kNumTracks> programs = kDefaultPrograms;   // General MIDI program 0..127 (Rhythm: drum kit)
+    bool sendProgram = false;                                  // emit program changes (playback and exported .mid)
 
     bool audible (int track) const noexcept
     {

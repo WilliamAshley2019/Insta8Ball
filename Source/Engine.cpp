@@ -1,4 +1,6 @@
 #include "Engine.h"
+#include "Drums.h"
+#include "Phrase.h"
 
 #include <algorithm>
 #include <cmath>
@@ -76,7 +78,9 @@ namespace
         Rng                rng;
         std::vector<ChordInfo> chords;
         Pattern            out;
-        std::vector<std::vector<int>> rhythmOnsets;   // per bar, tick positions, written by Rhythm, read by Melody
+        std::vector<PhrasePlan> plan;
+        DrumResult         drums;                       // anchors + kicks for bass / melody, even when the drum track is locked
+        std::vector<std::vector<int>> rhythmOnsets;     // per bar, tick positions the melody lands on
 
         const ChordInfo& chordForBar (int bar) const { return chords[(size_t) bar % chords.size()]; }
     };
@@ -112,16 +116,6 @@ namespace
         return std::clamp (1.0f - (float) std::abs (pitch - ref) / 24.0f, 0.15f, 1.0f);
     }
 
-    // ------------------------------------------------ Euclidean rhythm
-    std::vector<bool> euclid (int pulses, int steps, int rotate)
-    {
-        std::vector<bool> v ((size_t) steps, false);
-        if (pulses <= 0) return v;
-        for (int i = 0; i < steps; ++i)
-            v[(size_t) ((i + rotate) % steps)] = ((i * pulses) % steps) < pulses;
-        return v;
-    }
-
     // ------------------------------------------------ Chord
     void genChord (Ctx& c)
     {
@@ -142,106 +136,136 @@ namespace
         return 7;
     }
 
+    constexpr int kBassLo = 28, kBassHi = 48, kBassVel = 92;
+
+    void genBassEighths (Ctx& c, int bar)
+    {
+        const auto& ch    = c.chordForBar (bar);
+        const auto& next  = c.chordForBar (bar + 1);
+        const int   root  = wrapIntoRange (ch.rootMidi, kBassLo, kBassHi);
+        const int   fifth = wrapIntoRange (ch.rootMidi + fifthOf (chordShapeAt (ch.shape)), kBassLo, kBassHi);
+        const int   base  = bar * kBarTicks;
+
+        const bool variation = c.rng.nextFloat() < 0.25f;
+        const bool pickup    = c.rng.nextFloat() < 0.35f;
+        const int  gate      = kEighth * 70 / 100;
+
+        const int pitches[4] = { root, fifth, root, fifth };
+        for (int i = 0; i < 4; ++i)
+        {
+            int len = gate;
+            if (variation && i == 3) len = kEighth / 2 - 10;
+            addNote (c, Bass, base + i * 2 * kEighth, len, pitches[i], i % 2 == 0 ? kBassVel : kBassVel * 85 / 100);
+        }
+        if (variation)
+            addNote (c, Bass, base + 6 * kEighth + kEighth / 2, kEighth / 2 - 10,
+                     wrapIntoRange (fifth + 12, kBassLo, kBassHi), kBassVel * 75 / 100);
+        if (pickup)
+        {
+            const int approach = snapToScale (*c.scale, c.p.rootPc, next.rootMidi - 1);
+            addNote (c, Bass, base + 7 * kEighth, kEighth / 2, wrapIntoRange (approach, kBassLo, kBassHi), kBassVel * 90 / 100);
+        }
+    }
+
+    // Bass notes sit on the kick hits, so kick and bass read as one instrument.
+    void genBassKickLock (Ctx& c, int bar)
+    {
+        const auto& kicks = c.drums.kicks[(size_t) bar];
+        if (kicks.empty()) { genBassEighths (c, bar); return; }
+
+        const auto& ch    = c.chordForBar (bar);
+        const auto& next  = c.chordForBar (bar + 1);
+        const int   root  = wrapIntoRange (ch.rootMidi, kBassLo, kBassHi);
+        const int   fifth = wrapIntoRange (ch.rootMidi + fifthOf (chordShapeAt (ch.shape)), kBassLo, kBassHi);
+        const int   barEnd = (bar + 1) * kBarTicks;
+
+        const bool approachNote = c.rng.nextFloat() < 0.3f && kicks.back() < barEnd - 2 * kStep16;
+        const int  lastEnd      = approachNote ? barEnd - kStep16 : barEnd;   // keep the last kick note clear of the approach note
+
+        for (size_t i = 0; i < kicks.size(); ++i)
+        {
+            const int start = kicks[i];
+            const int gap   = (i + 1 < kicks.size() ? kicks[i + 1] : lastEnd) - start;
+            int len = std::clamp ((int) ((float) gap * c.drums.sustain), 90, kPPQ * 2);
+            len = std::min (len, std::max (60, gap - 12));
+
+            int pitch = root;
+            if (i > 0)
+            {
+                const float r = c.rng.nextFloat();
+                if (r < 0.22f) pitch = fifth;
+                else if (r < 0.34f && root + 12 <= kBassHi) pitch = root + 12;
+            }
+            addNote (c, Bass, start, len, pitch, kBassVel + (i == 0 ? 8 : -4) + c.rng.nextInt (6));
+        }
+        if (approachNote)   // approach note into the next chord
+        {
+            const int approach = snapToScale (*c.scale, c.p.rootPc, next.rootMidi - 1);
+            addNote (c, Bass, barEnd - kStep16, kStep16 - 20, wrapIntoRange (approach, kBassLo, kBassHi), kBassVel * 85 / 100);
+        }
+    }
+
+    // House / techno: bass on the off-beat eighths, leaving the kick alone.
+    void genBassOffbeat (Ctx& c, int bar)
+    {
+        const auto& ch   = c.chordForBar (bar);
+        const int   root = wrapIntoRange (ch.rootMidi, kBassLo, kBassHi);
+        const int   fifth = wrapIntoRange (ch.rootMidi + fifthOf (chordShapeAt (ch.shape)), kBassLo, kBassHi);
+        for (int beat = 0; beat < 4; ++beat)
+        {
+            const int pitch = (beat == 3 && c.rng.nextFloat() < 0.2f) ? fifth : root;
+            addNote (c, Bass, bar * kBarTicks + beat * kPPQ + kEighth, kEighth * 75 / 100, pitch, kBassVel - 4 + c.rng.nextInt (8));
+        }
+    }
+
+    // Disco / synthwave: running eighths jumping an octave.
+    void genBassPulse (Ctx& c, int bar)
+    {
+        const auto& ch   = c.chordForBar (bar);
+        const int   root = wrapIntoRange (ch.rootMidi, kBassLo, kBassHi - 12);
+        const int   fifth = wrapIntoRange (ch.rootMidi + fifthOf (chordShapeAt (ch.shape)), kBassLo, kBassHi - 12);
+        for (int i = 0; i < 8; ++i)
+        {
+            int pitch = (i % 2 == 0) ? root : root + 12;
+            if (i == 5 && c.rng.nextFloat() < 0.3f) pitch = fifth + 12;
+            addNote (c, Bass, bar * kBarTicks + i * kEighth, kEighth * (int) (c.drums.sustain * 100.0f) / 100 - 10, pitch,
+                     i % 2 == 0 ? kBassVel : kBassVel * 80 / 100);
+        }
+    }
+
     void genBass (Ctx& c)
     {
-        constexpr int lo = 28, hi = 48, vel = 92;
         for (int bar = 0; bar < c.p.bars; ++bar)
-        {
-            const auto& ch    = c.chordForBar (bar);
-            const auto& next  = c.chordForBar (bar + 1);
-            const int   root  = wrapIntoRange (ch.rootMidi, lo, hi);
-            const int   fifth = wrapIntoRange (ch.rootMidi + fifthOf (chordShapeAt (ch.shape)), lo, hi);
-            const int   base  = bar * kBarTicks;
-
-            const bool variation = c.rng.nextFloat() < 0.25f;
-            const bool pickup    = c.rng.nextFloat() < 0.35f;
-            const int  gate      = kEighth * 70 / 100;
-
-            const int pitches[4] = { root, fifth, root, fifth };
-            for (int i = 0; i < 4; ++i)
+            switch (c.drums.bassMode)
             {
-                const int slot = i * 2;
-                int len = gate;
-                if (variation && i == 3) len = kEighth / 2 - 10;
-                addNote (c, Bass, base + slot * kEighth, len, pitches[i], i % 2 == 0 ? vel : vel * 85 / 100);
+                case BassMode::KickLock: genBassKickLock (c, bar); break;
+                case BassMode::Offbeat:  genBassOffbeat (c, bar);  break;
+                case BassMode::Pulse:    genBassPulse (c, bar);    break;
+                default:                 genBassEighths (c, bar);  break;
             }
-            if (variation)
-                addNote (c, Bass, base + 6 * kEighth + kEighth / 2, kEighth / 2 - 10,
-                         wrapIntoRange (fifth + 12, lo, hi), vel * 75 / 100);
-            if (pickup)
-            {
-                const int approach = snapToScale (*c.scale, c.p.rootPc, next.rootMidi - 1);
-                addNote (c, Bass, base + 7 * kEighth, kEighth / 2, wrapIntoRange (approach, lo, hi), vel * 90 / 100);
-            }
-        }
     }
 
     // ------------------------------------------------ Rhythm
-    struct DrumStyle { int kickP, kickR, snareP, snareR, hatP, hatR; };
-
-    void genRhythm (Ctx& c)
+    void genRhythm (Ctx& c, bool locked)
     {
-        static const DrumStyle styles[] = {
-            { 4, 0, 2, 4, 8, 0 },    // straight
-            { 3, 0, 2, 4, 8, 2 },    // sparse kick, off-beat hats
-            { 5, 0, 2, 4, 16, 0 },   // busy kick, sixteenth hats
-            { 4, 0, 2, 4, 8, 2 },    // four on the floor, off-beat hats
-        };
-        const DrumStyle st = styles[c.rng.nextInt (4)];
-
-        constexpr int kick = 36, snare = 38, hat = 42, drumLen = 120;
-        const auto kp = euclid (st.kickP, 16, st.kickR);
-        const auto sp = euclid (st.snareP, 16, st.snareR);
-        const auto hp = euclid (st.hatP, 16, st.hatR);
-
-        c.rhythmOnsets.assign ((size_t) c.p.bars, {});
-
-        for (int bar = 0; bar < c.p.bars; ++bar)
+        if (locked)
         {
-            const int  base = bar * kBarTicks;
-            const bool var  = c.rng.nextFloat() < 0.25f;
-            auto& onsets = c.rhythmOnsets[(size_t) bar];
-
-            for (int s = 0; s < 16; ++s)
-            {
-                int t = base + s * kStep16;
-                if (c.rng.nextFloat() < 0.08f && s % 4 != 0)   // loosen off-grid steps only
-                    t = std::clamp (t + (c.rng.nextBool() ? kStep16 : -kStep16), base, base + kBarTicks - 1);
-
-                bool hit = false;
-                if (kp[(size_t) s] && ! (var && s == 0 && bar % 2 == 1 && c.rng.nextBool()))
-                {
-                    addNote (c, Rhythm, t, drumLen, kick, 108 + c.rng.nextInt (8)); hit = true;
-                }
-                if (sp[(size_t) s]) { addNote (c, Rhythm, t, drumLen, snare, 96 + c.rng.nextInt (8)); hit = true; }
-                if (hp[(size_t) s])
-                {
-                    const int v = (s % 4 == 0) ? 74 : (s % 2 == 0 ? 62 : 50);
-                    addNote (c, Rhythm, t, drumLen, hat, v + c.rng.nextInt (6));
-                    if (s % 2 == 1 && ! kp[(size_t) s] && ! sp[(size_t) s]) hit = true;
-                }
-                if (var && s == 10 && ! kp[(size_t) s]) { addNote (c, Rhythm, t, drumLen, kick, 80); hit = true; }
-                if (hit) onsets.push_back (t);
-            }
-            std::sort (onsets.begin(), onsets.end());
-            onsets.erase (std::unique (onsets.begin(), onsets.end()), onsets.end());
-
-            constexpr size_t maxOnsets = 8;
-            if (onsets.size() > maxOnsets)
-            {
-                std::vector<int> reduced;
-                for (size_t i = 0; i < maxOnsets; ++i)
-                    reduced.push_back (onsets[i * (onsets.size() - 1) / (maxOnsets - 1)]);
-                reduced.erase (std::unique (reduced.begin(), reduced.end()), reduced.end());
-                onsets = std::move (reduced);
-            }
+            c.drums = analyseDrums (c.out[Rhythm], c.p.bars);
         }
+        else
+        {
+            DrumSettings ds;
+            ds.style = c.p.drumStyle; ds.complexity = c.p.drumComplexity; ds.swing = c.p.swing;
+            ds.humanize = c.p.humanize; ds.fills = c.p.fills; ds.bars = c.p.bars;
+            c.drums = generateDrums (ds, c.plan, c.rng);
+            c.out[Rhythm] = c.drums.notes;
+        }
+        c.rhythmOnsets = c.drums.anchors;
     }
 
     // ------------------------------------------------ Melody
-    float contourTarget (int contour, float t, int& walk, Rng& rng)
+    float contourTarget (int contour, float t, float centre, int& walk, Rng& rng)
     {
-        constexpr float centre = 72.0f;
         switch (contour)
         {
             case 0:  return centre - 4.0f + 10.0f * std::sin (3.14159265f * t);   // arch
@@ -254,26 +278,27 @@ namespace
 
     void genMelody (Ctx& c)
     {
-        constexpr int   lo = 60, hi = 84, phraseBars = 2;
-        constexpr float usage = 0.6f, phraseRest = 0.5f, chordBias = 0.75f;
+        constexpr int   lo = 60, hi = 84;
+        constexpr float phraseRest = 0.5f, chordBias = 0.75f;
         const float wRoot = 1.0f, wThird = 1.2f, wFifth = 0.9f, wSeventh = 0.7f, wColour = 0.5f;
 
         int prev = -1, contour = c.rng.nextInt (4), walk = 0;
 
         for (int bar = 0; bar < c.p.bars; ++bar)
         {
-            const int phraseBar = bar % phraseBars;
-            if (phraseBar == 0) contour = c.rng.nextInt (4);
+            const auto& pp = planAtBar (c.plan, bar);
+            if (isFirstBarOfPhrase (pp, bar)) contour = c.rng.nextInt (4);
 
             const auto& onsets = c.rhythmOnsets[(size_t) bar];
             if (onsets.empty()) continue;
 
-            const bool lastBarOfPhrase = phraseBar == phraseBars - 1;
+            const float usage = 0.42f + 0.4f * pp.activity;
+            const bool  lastBarOfPhrase = isLastBarOfPhrase (pp, bar);
             std::vector<int> chosen;
             for (size_t i = 0; i < onsets.size(); ++i)
             {
-                if (lastBarOfPhrase && i + 1 == onsets.size() && c.rng.nextFloat() < phraseRest) continue;
-                if ((phraseBar == 0 && i == 0) || c.rng.nextFloat() < usage) chosen.push_back (onsets[i]);
+                if (lastBarOfPhrase && ! pp.shouldResolve && i + 1 == onsets.size() && c.rng.nextFloat() < phraseRest) continue;
+                if ((isFirstBarOfPhrase (pp, bar) && i == 0) || c.rng.nextFloat() < usage) chosen.push_back (onsets[i]);
             }
             if (chosen.empty()) chosen.push_back (onsets.front());
 
@@ -286,23 +311,26 @@ namespace
                 const int end   = i + 1 < chosen.size() ? chosen[i + 1] : (bar + 1) * kBarTicks;
                 const int len   = std::clamp ((end - start) * 85 / 100, 60, kPPQ * 2);
 
-                const float t      = ((float) phraseBar + (float) i / (float) chosen.size()) / (float) phraseBars;
-                const int   target = (int) std::lround (contourTarget (contour, t, walk, c.rng));
+                const float t      = ((float) (bar - pp.startBar) + (float) i / (float) chosen.size()) / (float) pp.lengthBars;
+                const int   target = (int) std::lround (contourTarget (contour, t, (float) pp.targetPitch, walk, c.rng));
+                const bool  resolve = pp.shouldResolve && lastBarOfPhrase && i + 1 == chosen.size();
 
                 std::vector<Weighted> cands;
                 for (int iv : shape.intervals)
                 {
                     const int m = iv % 12;
-                    const float w = m == 0 ? wRoot : (m == 3 || m == 4) ? wThird : (m >= 6 && m <= 8) ? wFifth
-                                  : (m == 10 || m == 11) ? wSeventh : wColour;
+                    float w = m == 0 ? wRoot : (m == 3 || m == 4) ? wThird : (m >= 6 && m <= 8) ? wFifth
+                            : (m == 10 || m == 11) ? wSeventh : wColour;
+                    if (resolve) w = (m == 0) ? 4.0f : (m == 3 || m == 4 || (m >= 6 && m <= 8)) ? 2.0f : 0.0f;   // land on a stable chord tone
                     for (int oct = -3; oct <= 3; ++oct)
                     {
                         const int p = chord.rootMidi + iv + 12 * oct;
-                        if (p >= lo && p <= hi) cands.push_back ({ p, w * chordBias });
+                        if (p >= lo && p <= hi) cands.push_back ({ p, w * (resolve ? 1.0f : chordBias) });
                     }
                 }
-                for (int p = lo; p <= hi; ++p)
-                    if (inScale (*c.scale, c.p.rootPc, p)) cands.push_back ({ p, (1.0f - chordBias) * 0.7f });
+                if (! resolve)
+                    for (int p = lo; p <= hi; ++p)
+                        if (inScale (*c.scale, c.p.rootPc, p)) cands.push_back ({ p, (1.0f - chordBias) * 0.7f });
 
                 for (auto& w : cands)
                 {
@@ -313,8 +341,8 @@ namespace
                 const int pitch = weightedPick (cands, c.rng);
                 if (pitch < 0) continue;
 
-                const int vel = 76 + c.rng.nextInt (25) + (start % kPPQ == 0 ? 6 : 0);
-                addNote (c, Melody, start, len, pitch, vel);
+                const int vel = 72 + (int) (8.0f * pp.activity) + c.rng.nextInt (25) + (start % kPPQ == 0 ? 6 : 0);
+                addNote (c, Melody, start, resolve ? std::max (len, kPPQ) : len, pitch, vel);
                 prev = pitch;
             }
         }
@@ -441,7 +469,7 @@ namespace
     }
 }
 
-Pattern generatePattern (const GenParams& in)
+Pattern generatePattern (const GenParams& in, const Pattern* locked, uint32_t lockMask)
 {
     Ctx c;
     c.p        = in;
@@ -450,14 +478,19 @@ Pattern generatePattern (const GenParams& in)
     c.scale    = &scaleAt (in.scaleIndex);
     c.rng.reseed (in.seed);
     c.chords   = buildProgression (in.progressionIndex, c.p.rootPc, in.scaleIndex, c.p.bars);
+    c.plan     = makePhrasePlan (c.p.bars, c.rng);
 
-    genChord (c);
-    genBass (c);
-    genRhythm (c);
-    genMelody (c);
-    genPad (c);
-    genArp (c);
-    genFoliage (c);
+    auto isLocked = [&] (int t) { return locked != nullptr && ((lockMask >> t) & 1u) != 0; };
+    for (int t = 0; t < kNumTracks; ++t)
+        if (isLocked (t)) c.out[(size_t) t] = (*locked)[(size_t) t];
+
+    if (! isLocked (Chord)) genChord (c);
+    genRhythm (c, isLocked (Rhythm));      // drums first: bass and melody lock to them
+    if (! isLocked (Bass)) genBass (c);
+    if (! isLocked (Melody)) genMelody (c);
+    if (! isLocked (Pad)) genPad (c);
+    if (! isLocked (Arp)) genArp (c);
+    if (! isLocked (Foliage)) genFoliage (c);
 
     clampPattern (c.out, c.p.bars);
     return std::move (c.out);
@@ -603,6 +636,11 @@ std::vector<uint8_t> writeMidiFile (const Pattern& pattern, double bpm, const Ro
 
         std::vector<uint8_t> b;
         putMeta (b, 0, 0x03, text (trackName (t)));
+        if (routing.sendProgram && (! respectMuteSolo || routing.audible (t)))   // GM program (drum kit on channel 10)
+        {
+            b.push_back (0x00); b.push_back ((uint8_t) (0xC0 | (routing.channelOf (t) - 1)));
+            b.push_back ((uint8_t) std::clamp (routing.programs[(size_t) t], 0, 127));
+        }
         uint32_t last = 0;
         for (const auto& e : evs)
         {
@@ -616,3 +654,4 @@ std::vector<uint8_t> writeMidiFile (const Pattern& pattern, double bpm, const Ro
 }
 
 } // namespace icc
+

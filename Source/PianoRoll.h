@@ -31,6 +31,7 @@ public:
     void setDrawMode (bool);                      // click on empty space adds a note
     void setNewNoteTrack (int track) noexcept { newNoteTrack = juce::jlimit (0, kNumTracks - 1, track); }
     void setPlayhead (double tick, bool running);
+    void setDrumLabels (bool);                    // label keys with General MIDI drum names (wide key column) and frame the drum range
 
     bool canUndo() const noexcept { return ! undoStack.empty(); }
     bool canRedo() const noexcept { return ! redoStack.empty(); }
@@ -51,7 +52,8 @@ private:
     enum class Drag { None, Move, Resize, Marquee, Velocity };
 
     // geometry
-    static constexpr int keyW = 46, rulerH = 18, velH = 64;
+    int keyW = 46;
+    static constexpr int rulerH = 18, velH = 64;
     juce::Rectangle<int> noteArea() const;
     juce::Rectangle<int> velArea() const;
     float tickToX (double tick) const noexcept;
@@ -61,7 +63,7 @@ private:
     int   gridTicks() const noexcept { return kBarTicks / grid; }
     int   loopTicks() const noexcept { return bars * kBarTicks; }
     juce::Rectangle<float> noteRect (const RNote&) const;
-    int   hitTest (juce::Point<int>) const;
+    int   noteAtPoint (juce::Point<int>) const;
     int   velocityHit (juce::Point<int>) const;
     void  clampView();
 
@@ -86,7 +88,7 @@ private:
 
     int  bars = 4, grid = 16, newNoteTrack = Melody;
     int  rootPc = 0, scaleIndex = 0;
-    bool snapScale = false, drawMode = false, playing = false;
+    bool snapScale = false, drawMode = false, playing = false, drumLabels = false;
     double playhead = 0.0;
     Routing routing;
 

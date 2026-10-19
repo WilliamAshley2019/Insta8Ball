@@ -13,11 +13,13 @@
 namespace icc
 {
 
-/** Drag this onto a DAW track / piano roll to drop the current pattern as a .mid file. */
+/** Drag this onto a DAW track / piano roll to drop the pattern (or one track of it) as a .mid file. */
 class DragExport final : public juce::Component
 {
 public:
     std::function<std::vector<uint8_t>()> provider;
+    juce::String label { "Drag MIDI into your DAW" };
+    float fontSize = 13.0f;
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
@@ -35,36 +37,41 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void selectEditTrack (int track);   // which track new notes go to; Rhythm also switches the keys to GM drum names
 
 private:
     void timerCallback() override;
     void syncPattern();
     void updateCounts (const Pattern&);
+    void refreshStatus();
     void saveMidiAs();
+    void showMap();
 
     Processor& proc;
     juce::LookAndFeel_V4 laf;
     uint32_t seenVersion = 0xFFFFFFFFu;
+    size_t   lastNotes = 0;
 
     // parameter controls
-    juce::ComboBox rootBox, scaleBox, progBox;
-    juce::Slider   bpmSlider, barsSlider, seedSlider, foliageSlider;
+    juce::ComboBox rootBox, scaleBox, progBox, drumStyleBox;
+    juce::Slider   bpmSlider, barsSlider, seedSlider, foliageSlider, complexitySlider, swingSlider, humanizeSlider, fillsSlider, variantsSlider;
     juce::TextButton generateBtn { "Generate" }, diceBtn { "Dice" }, previewBtn { "Preview" }, drawBtn { "Draw" },
-                     undoBtn { "Undo" }, redoBtn { "Redo" }, saveBtn { "Save .mid" };
-    juce::ToggleButton snapBtn { "Snap to scale" };
+                     undoBtn { "Undo" }, redoBtn { "Redo" }, saveBtn { "Save .mid" }, mapBtn { "Map" };
+    juce::ToggleButton snapBtn { "Snap to scale" }, sendPcBtn { "Send PC" };
     juce::ComboBox gridBox, noteTrackBox;
-    std::array<juce::Label, 8> captions;
-    juce::Label status;
+    std::array<juce::Label, 14> captions;
+    juce::Label status, progStrip;
 
     std::array<juce::TextButton, kNumScenes> sceneBtns;
 
     struct TrackRow
     {
-        juce::Label        name, count;
-        juce::ComboBox     channel;
-        juce::ToggleButton mute { "M" }, solo { "S" };
-        std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> chAtt;
-        std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>   mAtt, sAtt;
+        juce::Label        name;
+        juce::ComboBox     channel, program;
+        juce::ToggleButton mute { "M" }, solo { "S" }, lock { "L" };
+        DragExport         drag;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> chAtt, prAtt;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>   mAtt, sAtt, lAtt;
     };
     std::array<TrackRow, kNumTracks> rows;
 
@@ -75,9 +82,9 @@ private:
     using SA = juce::AudioProcessorValueTreeState::SliderAttachment;
     using CA = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using BA = juce::AudioProcessorValueTreeState::ButtonAttachment;
-    std::unique_ptr<CA> rootAtt, scaleAtt, progAtt;
-    std::unique_ptr<SA> bpmAtt, barsAtt, seedAtt, foliageAtt;
-    std::unique_ptr<BA> snapAtt;
+    std::unique_ptr<CA> rootAtt, scaleAtt, progAtt, styleAtt;
+    std::unique_ptr<SA> bpmAtt, barsAtt, seedAtt, foliageAtt, cxAtt, swingAtt, humAtt, fillsAtt, varAtt;
+    std::unique_ptr<BA> snapAtt, pcAtt;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Editor)
 };

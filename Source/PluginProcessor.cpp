@@ -1,5 +1,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "Drums.h"
+#include "Harmony.h"
+#include "Mapping.h"
 
 #include <algorithm>
 #include <cmath>
@@ -31,6 +34,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout Processor::makeLayout()
                                                         NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.35f));
     layout.add (std::make_unique<AudioParameterBool>   (ParameterID { ids::snapScale, v }, "Snap To Scale", false));
 
+    StringArray styleNames { "Auto (by seed)" }, programNames;
+    for (int i = 0; i < drumStyleCount(); ++i) styleNames.add (drumStyleName (i));
+    StringArray kitNames;
+    for (int i = 0; i < 128; ++i)
+    {
+        programNames.add (String (i + 1) + "  " + gmProgramName (i));
+        kitNames.add (String (i + 1) + "  " + String (gmDrumKitName (i)));
+    }
+    auto unit = [] { return NormalisableRange<float> (0.0f, 1.0f, 0.01f); };
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ids::drumStyle, v }, "Drum Style", styleNames, 0));
+    layout.add (std::make_unique<AudioParameterFloat>  (ParameterID { ids::drumComplexity, v }, "Drum Complexity", unit(), 0.5f));
+    layout.add (std::make_unique<AudioParameterFloat>  (ParameterID { ids::swing, v }, "Swing", unit(), 0.0f));
+    layout.add (std::make_unique<AudioParameterFloat>  (ParameterID { ids::humanize, v }, "Humanize", unit(), 0.3f));
+    layout.add (std::make_unique<AudioParameterFloat>  (ParameterID { ids::fills, v }, "Fills", unit(), 0.5f));
+    layout.add (std::make_unique<AudioParameterInt>    (ParameterID { ids::candidates, v }, "Variants", 1, 16, 4));
+    layout.add (std::make_unique<AudioParameterBool>   (ParameterID { ids::sendProgram, v }, "Send Program Change", false));
+
     for (int t = 0; t < kNumTracks; ++t)
     {
         const String n = trackName (t);
@@ -38,6 +58,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout Processor::makeLayout()
                                                             channelNames, kDefaultChannels[(size_t) t] - 1));
         layout.add (std::make_unique<AudioParameterBool> (ParameterID { ids::mute (t), v }, n + " Mute", false));
         layout.add (std::make_unique<AudioParameterBool> (ParameterID { ids::solo (t), v }, n + " Solo", false));
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ids::program (t), v }, n + (t == Rhythm ? " Drum Kit" : " GM Program"),
+                                                            t == Rhythm ? kitNames : programNames,
+                                                            kDefaultPrograms[(size_t) t]));
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { ids::lock (t), v }, n + " Lock", false));
     }
     return layout;
 }
@@ -49,8 +73,12 @@ Processor::Processor()
     bpmParam = apvts.getRawParameterValue (ids::bpm);
 
     apvts.addParameterListener (ids::bars, this);
+    apvts.addParameterListener (ids::sendProgram, this);
+    sentProgram.fill (-1);
+    sentChannel.fill (-1);
     for (int t = 0; t < kNumTracks; ++t)
     {
+        apvts.addParameterListener (ids::program (t), this);
         apvts.addParameterListener (ids::channel (t), this);
         apvts.addParameterListener (ids::mute (t), this);
         apvts.addParameterListener (ids::solo (t), this);
@@ -66,8 +94,10 @@ Processor::~Processor()
 {
     stopTimer();
     apvts.removeParameterListener (ids::bars, this);
+    apvts.removeParameterListener (ids::sendProgram, this);
     for (int t = 0; t < kNumTracks; ++t)
     {
+        apvts.removeParameterListener (ids::program (t), this);
         apvts.removeParameterListener (ids::channel (t), this);
         apvts.removeParameterListener (ids::mute (t), this);
         apvts.removeParameterListener (ids::solo (t), this);
@@ -101,6 +131,12 @@ GenParams Processor::paramsFromState() const
     g.bars             = juce::jlimit (1, kMaxBars, (int) std::lround (get (ids::bars)));
     g.seed             = (uint32_t) juce::jlimit (0, kMaxSeed, (int) std::lround (get (ids::seed)));
     g.foliageDensity   = juce::jlimit (0.0f, 1.0f, get (ids::foliage));
+    g.drumStyle        = juce::jlimit (-1, drumStyleCount() - 1, (int) std::lround (get (ids::drumStyle)) - 1);
+    g.drumComplexity   = juce::jlimit (0.0f, 1.0f, get (ids::drumComplexity));
+    g.swing            = juce::jlimit (0.0f, 1.0f, get (ids::swing));
+    g.humanize         = juce::jlimit (0.0f, 1.0f, get (ids::humanize));
+    g.fills            = juce::jlimit (0.0f, 1.0f, get (ids::fills));
+    g.candidates       = juce::jlimit (1, 16, (int) std::lround (get (ids::candidates)));
     return g;
 }
 
@@ -112,7 +148,9 @@ Routing Processor::routingFromState() const
         if (apvts.getRawParameterValue (ids::mute (t))->load() > 0.5f) r.mute |= 1u << t;
         if (apvts.getRawParameterValue (ids::solo (t))->load() > 0.5f) r.solo |= 1u << t;
         r.channels[(size_t) t] = juce::jlimit (1, 16, (int) std::lround (apvts.getRawParameterValue (ids::channel (t))->load()) + 1);
+        r.programs[(size_t) t] = juce::jlimit (0, 127, (int) std::lround (apvts.getRawParameterValue (ids::program (t))->load()));
     }
+    r.sendProgram = apvts.getRawParameterValue (ids::sendProgram)->load() > 0.5f;
     return r;
 }
 
@@ -145,11 +183,20 @@ void Processor::captureActiveScene()
 void Processor::generate()
 {
     const auto gp = paramsFromState();
-    auto p = generatePattern (gp);
+
+    uint32_t lockMask = 0;
+    for (int t = 0; t < kNumTracks; ++t)
+        if (apvts.getRawParameterValue (ids::lock (t))->load() > 0.5f) lockMask |= 1u << t;
+
+    const Pattern existing = getPattern();
+    auto result = generateBest (gp, &existing, lockMask);
     {
         const juce::ScopedLock sl (dataLock);
-        pattern    = std::move (p);
-        lastParams = gp;
+        pattern      = std::move (result.pattern);
+        lastParams   = gp;
+        lastScore    = std::move (result.score);
+        lastVariant  = result.variant;
+        lastVariants = result.variants;
         captureActiveScene();
     }
     ++patternVersion;
@@ -192,10 +239,18 @@ void Processor::applySceneToParameters (const Scene& s)
     setParam (ids::bars, (float) s.params.bars);
     setParam (ids::seed, (float) s.params.seed);
     setParam (ids::foliage, s.params.foliageDensity);
+    setParam (ids::drumStyle, (float) (s.params.drumStyle + 1));
+    setParam (ids::drumComplexity, s.params.drumComplexity);
+    setParam (ids::swing, s.params.swing);
+    setParam (ids::humanize, s.params.humanize);
+    setParam (ids::fills, s.params.fills);
+    setParam (ids::candidates, (float) s.params.candidates);
+    setParam (ids::sendProgram, s.routing.sendProgram ? 1.0f : 0.0f);
     setParam (ids::bpm, (float) s.bpm);
     for (int t = 0; t < kNumTracks; ++t)
     {
         setParam (ids::channel (t), (float) (s.routing.channels[(size_t) t] - 1));
+        setParam (ids::program (t), (float) s.routing.programs[(size_t) t]);
         setParam (ids::mute (t), (s.routing.mute >> t) & 1u ? 1.0f : 0.0f);
         setParam (ids::solo (t), (s.routing.solo >> t) & 1u ? 1.0f : 0.0f);
     }
@@ -236,14 +291,54 @@ void Processor::selectScene (int index)
 
 void Processor::setPreviewPlaying (bool shouldPlay) { previewPlaying.store (shouldPlay); }
 
-std::vector<uint8_t> Processor::renderMidiFile (bool respectMuteSolo) const
+std::vector<uint8_t> Processor::renderMidiFile (bool respectMuteSolo, int onlyTrack) const
 {
     Pattern p;
     {
         const juce::ScopedLock sl (dataLock);
         p = pattern;
     }
-    return writeMidiFile (p, bpmFromState(), routingFromState(), barsFromState(), respectMuteSolo);
+    auto routing = routingFromState();
+    if (onlyTrack >= 0 && onlyTrack < kNumTracks)
+    {
+        routing.solo = 1u << onlyTrack;
+        routing.mute = 0;
+        respectMuteSolo = true;
+    }
+    return writeMidiFile (p, bpmFromState(), routing, barsFromState(), respectMuteSolo);
+}
+
+PatternScore Processor::getLastScore() const
+{
+    const juce::ScopedLock sl (dataLock);
+    return lastScore;
+}
+
+juce::String Processor::getLastGenerationSummary() const
+{
+    const juce::ScopedLock sl (dataLock);
+    if (lastScore.total <= 0.0f) return {};
+    juce::String s = "Score " + juce::String (juce::roundToInt (lastScore.total));
+    if (lastVariants > 1) s += "  (best of " + juce::String (lastVariants) + ", variant " + juce::String (lastVariant + 1) + ")";
+    if (! lastScore.notes.empty()) s += "  -  " + juce::String (lastScore.notes.front());
+    return s;
+}
+
+std::string Processor::getProgressionText() const
+{
+    const auto gp = paramsFromState();
+    return describeProgression (buildProgression (gp.progressionIndex, gp.rootPc, gp.scaleIndex, gp.bars), gp.rootPc, gp.scaleIndex);
+}
+
+std::string Processor::getMappingText() const
+{
+    const auto r = routingFromState();
+    const auto gp = paramsFromState();
+    std::string s = describeMapping (r.channels, r.programs, r.sendProgram);
+    s += "\n" + describeDrumKeys();
+    if (gp.drumStyle >= 0)
+        s += "\nDrum style: " + std::string (drumStyleName (gp.drumStyle)) + " (written for about " + std::to_string (drumStyleBpm (gp.drumStyle)) + " BPM)\n";
+    return s;
 }
 
 // ======================================================================= publishing
@@ -323,12 +418,7 @@ void Processor::getStateInformation (juce::MemoryBlock& dest)
         icc.setProperty ("version", 1, nullptr);
         icc.setProperty ("activeScene", activeScene.load(), nullptr);
         icc.setProperty ("pattern", patternToBase64 (pattern), nullptr);
-        icc.setProperty ("root", lastParams.rootPc, nullptr);
-        icc.setProperty ("scale", lastParams.scaleIndex, nullptr);
-        icc.setProperty ("prog", lastParams.progressionIndex, nullptr);
-        icc.setProperty ("bars", lastParams.bars, nullptr);
-        icc.setProperty ("seed", (juce::int64) lastParams.seed, nullptr);
-        icc.setProperty ("foliage", (double) lastParams.foliageDensity, nullptr);
+        paramsToTree (icc, lastParams);
         icc.addChild (scenes.toValueTree(), -1, nullptr);
         state.addChild (icc, -1, nullptr);
     }
@@ -370,12 +460,8 @@ void Processor::setStateInformation (const void* data, int size)
                 clampPattern (p, barsFromState());
                 pattern = std::move (p);
             }
-            lastParams.rootPc           = juce::jlimit (0, 11, (int) icc.getProperty ("root", 0));
-            lastParams.scaleIndex       = juce::jmax (0, (int) icc.getProperty ("scale", 0));
-            lastParams.progressionIndex = juce::jmax (0, (int) icc.getProperty ("prog", 0));
-            lastParams.bars             = barsFromState();
-            lastParams.seed             = (uint32_t) juce::jlimit ((juce::int64) 0, (juce::int64) kMaxSeed, (juce::int64) icc.getProperty ("seed", 1));
-            lastParams.foliageDensity   = juce::jlimit (0.0f, 1.0f, (float) (double) icc.getProperty ("foliage", 0.35));
+            paramsFromTree (icc, lastParams);
+            lastParams.bars = barsFromState();
         }
         else
         {
@@ -497,6 +583,7 @@ void Processor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBuffer&
     {
         releaseAll (midi, 0);
         lastSource = src;
+        programsPending = true;
         haveExpected = false;
         origin = 0.0;
         if (src == Source::Internal) internalTick = 0.0;
@@ -513,6 +600,21 @@ void Processor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBuffer&
             appliedSignal.store (p->sceneTag);
         }
         return;
+    }
+
+    if (cur != nullptr && cur->routing.sendProgram)   // GM program per channel, at the start and whenever it changes
+    {
+        for (int t = 0; t < kNumTracks; ++t)
+        {
+            const int ch = cur->routing.channelOf (t), pr = juce::jlimit (0, 127, cur->routing.programs[(size_t) t]);
+            if (programsPending || sentProgram[(size_t) t] != pr || sentChannel[(size_t) t] != ch)
+            {
+                midi.addEvent (juce::MidiMessage::programChange (ch, pr), 0);
+                sentProgram[(size_t) t] = pr;
+                sentChannel[(size_t) t] = ch;
+            }
+        }
+        programsPending = false;
     }
 
     const double t0  = (src == Source::Host) ? hostTick : internalTick;

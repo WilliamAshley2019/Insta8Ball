@@ -7,6 +7,7 @@
 //                    (apart from MidiBuffer growth inside the host's own buffer), no parameter writes.
 
 #include "Engine.h"
+#include "Score.h"
 #include "Storage.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -28,6 +29,15 @@ namespace ids
     constexpr const char* seed       = "seed";
     constexpr const char* foliage    = "foliageDensity";
     constexpr const char* snapScale  = "snapScaleEnabled";
+    constexpr const char* drumStyle  = "drumStyle";        // choice: 0 = Auto, 1.. = style index + 1
+    constexpr const char* drumComplexity = "drumComplexity";
+    constexpr const char* swing      = "swing";
+    constexpr const char* humanize   = "humanize";
+    constexpr const char* fills      = "fills";
+    constexpr const char* candidates = "candidates";
+    constexpr const char* sendProgram = "sendProgramChange";
+    inline juce::String program (int t) { return "program_" + juce::String (t); }
+    inline juce::String lock    (int t) { return "lock_"    + juce::String (t); }
     inline juce::String channel (int t) { return "channel_" + juce::String (t); }
     inline juce::String mute    (int t) { return "mute_"    + juce::String (t); }
     inline juce::String solo    (int t) { return "solo_"    + juce::String (t); }
@@ -87,7 +97,13 @@ public:
     bool isTransportRunning() const noexcept { return transportRunning.load(); }
     double getPlayheadTick() const noexcept { return playheadTick.load(); }   // loop-relative
 
-    std::vector<uint8_t> renderMidiFile (bool respectMuteSolo) const;
+    /** onlyTrack >= 0 renders just that track (used by the per-track drag handles). */
+    std::vector<uint8_t> renderMidiFile (bool respectMuteSolo, int onlyTrack = -1) const;
+
+    PatternScore getLastScore() const;                       // score + findings of the last Generate
+    juce::String getLastGenerationSummary() const;           // "Best of 4 (variant 3) - score 86"
+    std::string  getProgressionText() const;                 // chord names + roman numerals + cadence
+    std::string  getMappingText() const;                     // channel / GM program / FL Studio routing guide
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout makeLayout();
@@ -115,6 +131,8 @@ private:
     Pattern    pattern;
     GenParams  lastParams;
     SceneBank  scenes;
+    PatternScore lastScore;
+    int          lastVariant = 0, lastVariants = 1;
 
     struct Owned { std::unique_ptr<Playback> table; double lastActive; };
     std::vector<Owned> owned;
@@ -139,6 +157,8 @@ private:
     const Playback* lastTable = nullptr;
     double          origin = 0.0;          // pattern restarts here (set when a scene switch lands)
     double          currentRate = 0.0;     // written in prepareToPlay (never concurrently with processBlock)
+    std::array<int, kNumTracks> sentProgram {}, sentChannel {};   // last program change emitted per track (-1 = none)
+    bool            programsPending = true;
     double          internalTick = 0.0;
     double          expectedTick = 0.0;
     bool            haveExpected = false;

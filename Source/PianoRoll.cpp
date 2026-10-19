@@ -1,4 +1,5 @@
 #include "PianoRoll.h"
+#include "Mapping.h"
 
 #include <algorithm>
 #include <cmath>
@@ -120,7 +121,7 @@ juce::Rectangle<float> PianoRoll::noteRect (const RNote& r) const
              std::max (3.0f, (float) (r.n.length * pxPerTick)), rowH - 2.0f };
 }
 
-int PianoRoll::hitTest (juce::Point<int> p) const
+int PianoRoll::noteAtPoint (juce::Point<int> p) const
 {
     for (int i = (int) notes.size() - 1; i >= 0; --i)
         if (noteRect (notes[(size_t) i]).contains (p.toFloat())) return i;
@@ -145,6 +146,21 @@ int PianoRoll::snapPitch (int pitch) const
 }
 
 // ------------------------------------------------------------------ painting
+void PianoRoll::setDrumLabels (bool on)
+{
+    if (drumLabels == on) return;
+    drumLabels = on;
+    keyW = on ? 130 : 46;
+    if (on)
+    {
+        const float visible = (float) juce::jmax (100, noteArea().getHeight());
+        rowH = juce::jlimit (9.0f, 28.0f, visible / 51.0f);   // keys 34..84 cover everything the drum generator writes
+        topPitch = 84.0;
+    }
+    clampView();
+    repaint();
+}
+
 void PianoRoll::paint (juce::Graphics& g)
 {
     clampView();
@@ -217,7 +233,12 @@ void PianoRoll::paint (juce::Graphics& g)
         if (y + rowH < (float) area.getY() || y > (float) area.getBottom()) continue;
         g.setColour (isBlackKey (p) ? juce::Colour (0xff111318) : juce::Colour (0xffd9dce3));
         g.fillRect (juce::Rectangle<float> (0.0f, y, (float) keyW - 1.0f, rowH - 1.0f));
-        if (pcOf (p) == 0)
+        if (drumLabels && gmDrumName (p)[0] != '\0' && rowH >= 9.0f)
+        {
+            g.setColour (isBlackKey (p) ? juce::Colours::white : juce::Colours::black);
+            g.drawText (juce::String (p) + " " + gmDrumName (p), 3, (int) y, keyW - 6, (int) rowH, juce::Justification::centredLeft, true);
+        }
+        else if (pcOf (p) == 0)
         {
             g.setColour (juce::Colours::black);
             g.drawText ("C" + juce::String (p / 12 - 1), 2, (int) y, keyW - 4, (int) rowH, juce::Justification::centredRight);
@@ -398,7 +419,7 @@ void PianoRoll::paste()
 void PianoRoll::showContextMenu (juce::Point<int> where)
 {
     const bool any = std::any_of (notes.begin(), notes.end(), [] (const RNote& r) { return r.selected; });
-    const int ref  = hitTest (where);
+    const int ref  = noteAtPoint (where);
 
     juce::PopupMenu m;
     m.addItem (1, "Delete", any);
@@ -455,7 +476,7 @@ void PianoRoll::mouseDown (const juce::MouseEvent& e)
     if (! noteArea().contains (pos)) return;
 
     pasteTick = (int) (std::floor (xToTick ((float) pos.x) / gridTicks()) * gridTicks());
-    const int idx = hitTest (pos);
+    const int idx = noteAtPoint (pos);
 
     if (e.mods.isPopupMenu())
     {
@@ -580,7 +601,7 @@ void PianoRoll::mouseDoubleClick (const juce::MouseEvent& e)
     const auto pos = e.getPosition();
     if (! noteArea().contains (pos) || e.mods.isPopupMenu()) return;
 
-    const int idx = hitTest (pos);
+    const int idx = noteAtPoint (pos);
     if (idx >= 0)
     {
         for (auto& r : notes) r.selected = false;

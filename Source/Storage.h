@@ -35,6 +35,10 @@ private:
     std::array<Scene, kNumScenes> scenes;
 };
 
+/** Generation parameters <-> ValueTree properties (missing properties keep the defaults, so older saves load). */
+void paramsToTree (juce::ValueTree&, const GenParams&);
+void paramsFromTree (const juce::ValueTree&, GenParams&);
+
 juce::String patternToBase64 (const Pattern&);
 bool         patternFromBase64 (const juce::String&, Pattern&);
 

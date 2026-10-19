@@ -16,8 +16,8 @@ void DragExport::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff6c8cc8));
     g.drawRoundedRectangle (r, 5.0f, 1.2f);
     g.setColour (juce::Colours::white);
-    g.setFont (13.0f);
-    g.drawText ("Drag MIDI into your DAW", getLocalBounds(), juce::Justification::centred);
+    g.setFont (fontSize);
+    g.drawText (label, getLocalBounds(), juce::Justification::centred);
 }
 
 void DragExport::mouseDown (const juce::MouseEvent&)
@@ -31,6 +31,42 @@ void DragExport::mouseDrag (const juce::MouseEvent& e)
     if (started || e.getDistanceFromDragStart() < 6 || ! file.existsAsFile()) return;
     started = true;
     juce::DragAndDropContainer::performExternalDragDropOfFiles ({ file.getFullPathName() }, false, this);
+}
+
+// ------------------------------------------------------------------ Map popup
+namespace
+{
+    class MapPanel final : public juce::Component
+    {
+    public:
+        explicit MapPanel (const std::string& text)
+        {
+            box.setMultiLine (true, false);
+            box.setReadOnly (true);
+            box.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 12.5f, juce::Font::plain)));
+            box.setText (juce::String::fromUTF8 (text.c_str()), false);
+            copy.onClick = [text] { juce::SystemClipboard::copyTextToClipboard (juce::String::fromUTF8 (text.c_str())); };
+            addAndMakeVisible (box);
+            addAndMakeVisible (copy);
+            setSize (700, 600);
+        }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (8);
+            copy.setBounds (r.removeFromBottom (28).removeFromLeft (170));
+            r.removeFromBottom (6);
+            box.setBounds (r);
+        }
+    private:
+        juce::TextEditor box;
+        juce::TextButton copy { "Copy to clipboard" };
+    };
+}
+
+void Editor::showMap()
+{
+    auto* panel = new MapPanel (proc.getMappingText());
+    juce::CallOutBox::launchAsynchronously (std::unique_ptr<juce::Component> (panel), mapBtn.getScreenBounds(), nullptr);
 }
 
 // ------------------------------------------------------------------ Editor
@@ -49,6 +85,8 @@ Editor::Editor (Processor& p) : AudioProcessorEditor (&p), proc (p)
     fillChoice (rootBox, ids::root);
     fillChoice (scaleBox, ids::scale);
     fillChoice (progBox, ids::progression);
+    fillChoice (drumStyleBox, ids::drumStyle);
+    styleAtt = std::make_unique<CA> (apvts, ids::drumStyle, drumStyleBox);
     rootAtt  = std::make_unique<CA> (apvts, ids::root, rootBox);
     scaleAtt = std::make_unique<CA> (apvts, ids::scale, scaleBox);
     progAtt  = std::make_unique<CA> (apvts, ids::progression, progBox);
@@ -62,15 +100,25 @@ Editor::Editor (Processor& p) : AudioProcessorEditor (&p), proc (p)
     setupSlider (foliageSlider, juce::Slider::LinearHorizontal, 50);
     setupSlider (barsSlider, juce::Slider::IncDecButtons, 40);
     setupSlider (seedSlider, juce::Slider::IncDecButtons, 90);
+    for (auto* sl : { &complexitySlider, &swingSlider, &humanizeSlider, &fillsSlider }) setupSlider (*sl, juce::Slider::LinearHorizontal, 40);
+    setupSlider (variantsSlider, juce::Slider::IncDecButtons, 36);
     bpmAtt     = std::make_unique<SA> (apvts, ids::bpm, bpmSlider);
     barsAtt    = std::make_unique<SA> (apvts, ids::bars, barsSlider);
     seedAtt    = std::make_unique<SA> (apvts, ids::seed, seedSlider);
     foliageAtt = std::make_unique<SA> (apvts, ids::foliage, foliageSlider);
     snapAtt    = std::make_unique<BA> (apvts, ids::snapScale, snapBtn);
+    cxAtt      = std::make_unique<SA> (apvts, ids::drumComplexity, complexitySlider);
+    swingAtt   = std::make_unique<SA> (apvts, ids::swing, swingSlider);
+    humAtt     = std::make_unique<SA> (apvts, ids::humanize, humanizeSlider);
+    fillsAtt   = std::make_unique<SA> (apvts, ids::fills, fillsSlider);
+    varAtt     = std::make_unique<SA> (apvts, ids::candidates, variantsSlider);
+    pcAtt      = std::make_unique<BA> (apvts, ids::sendProgram, sendPcBtn);
 
-    const char* capText[] = { "Root", "Scale", "Progression", "BPM", "Bars", "Seed", "Foliage", "" };
-    juce::Component* capTarget[] = { &rootBox, &scaleBox, &progBox, &bpmSlider, &barsSlider, &seedSlider, &foliageSlider, nullptr };
-    for (size_t i = 0; i < 7; ++i)
+    const char* capText[] = { "Root", "Scale", "Progression", "BPM", "Bars", "Seed", "Foliage", "Drum style", "Complexity",
+                              "Swing", "Humanize", "Fills", "Variants (best of)", "" };
+    juce::Component* capTarget[] = { &rootBox, &scaleBox, &progBox, &bpmSlider, &barsSlider, &seedSlider, &foliageSlider,
+                                     &drumStyleBox, &complexitySlider, &swingSlider, &humanizeSlider, &fillsSlider, &variantsSlider, nullptr };
+    for (size_t i = 0; i < 13; ++i)
     {
         captions[i].setText (capText[i], juce::dontSendNotification);
         captions[i].setFont (juce::FontOptions (11.0f));
@@ -81,11 +129,16 @@ Editor::Editor (Processor& p) : AudioProcessorEditor (&p), proc (p)
     for (auto* c : std::initializer_list<juce::Component*> { &rootBox, &scaleBox, &progBox, &bpmSlider, &barsSlider, &seedSlider,
                                                               &foliageSlider, &generateBtn, &diceBtn, &previewBtn, &snapBtn, &drawBtn,
                                                               &undoBtn, &redoBtn, &gridBox, &noteTrackBox, &saveBtn, &status,
-                                                              &roll, &dragExport })
+                                                              &roll, &dragExport, &drumStyleBox, &complexitySlider, &swingSlider,
+                                                              &humanizeSlider, &fillsSlider, &variantsSlider, &sendPcBtn, &mapBtn, &progStrip })
         addAndMakeVisible (c);
 
     generateBtn.onClick = [this] { proc.generate(); syncPattern(); };
     diceBtn.onClick     = [this] { proc.randomizeSeed(); proc.generate(); syncPattern(); };
+    mapBtn.onClick      = [this] { showMap(); };
+    progStrip.setFont (juce::FontOptions (13.0f));
+    progStrip.setColour (juce::Label::textColourId, juce::Colour (0xffc9d3ea));
+    progStrip.setJustificationType (juce::Justification::centredLeft);
     previewBtn.setClickingTogglesState (true);
     previewBtn.onClick  = [this] { proc.setPreviewPlaying (previewBtn.getToggleState()); };
     drawBtn.setClickingTogglesState (true);
@@ -99,7 +152,7 @@ Editor::Editor (Processor& p) : AudioProcessorEditor (&p), proc (p)
     gridBox.onChange = [this] { static const int div[] = { 4, 8, 16, 32 }; roll.setGridDivision (div[juce::jlimit (0, 3, gridBox.getSelectedId() - 1)]); };
     for (int t = 0; t < kNumTracks; ++t) noteTrackBox.addItem (trackName (t), t + 1);
     noteTrackBox.setSelectedId (1, juce::dontSendNotification);
-    noteTrackBox.onChange = [this] { roll.setNewNoteTrack (noteTrackBox.getSelectedId() - 1); };
+    noteTrackBox.onChange = [this] { selectEditTrack (noteTrackBox.getSelectedId() - 1); };
 
     for (int i = 0; i < kNumScenes; ++i)
     {
@@ -113,15 +166,23 @@ Editor::Editor (Processor& p) : AudioProcessorEditor (&p), proc (p)
         auto& r = rows[(size_t) t];
         r.name.setText (trackName (t), juce::dontSendNotification);
         r.name.setColour (juce::Label::textColourId, kTrackColours[t]);
-        r.count.setColour (juce::Label::textColourId, juce::Colour (0xff9aa3b5));
-        r.count.setJustificationType (juce::Justification::centredRight);
         for (int c = 1; c <= 16; ++c) r.channel.addItem (juce::String (c), c);
+        if (auto* pc = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter (ids::program (t))))
+            r.program.addItemList (pc->choices, 1);
         r.chAtt = std::make_unique<CA> (apvts, ids::channel (t), r.channel);
+        r.prAtt = std::make_unique<CA> (apvts, ids::program (t), r.program);
         r.mAtt  = std::make_unique<BA> (apvts, ids::mute (t), r.mute);
         r.sAtt  = std::make_unique<BA> (apvts, ids::solo (t), r.solo);
+        r.lAtt  = std::make_unique<BA> (apvts, ids::lock (t), r.lock);
         r.mute.setColour (juce::ToggleButton::tickColourId, juce::Colour (0xffe57373));
         r.solo.setColour (juce::ToggleButton::tickColourId, juce::Colour (0xfffff176));
-        for (auto* c : std::initializer_list<juce::Component*> { &r.name, &r.count, &r.channel, &r.mute, &r.solo })
+        r.lock.setColour (juce::ToggleButton::tickColourId, juce::Colour (0xff81d4fa));
+        r.lock.setTooltip ("Lock: Generate leaves this track alone (the others still line up with it)");
+        r.program.setTooltip ("General MIDI program for this track (sent only when 'Send PC' is on)");
+        r.drag.label = "MIDI";
+        r.drag.fontSize = 11.0f;
+        r.drag.provider = [this, t] { return proc.renderMidiFile (true, t); };
+        for (auto* c : std::initializer_list<juce::Component*> { &r.name, &r.channel, &r.program, &r.mute, &r.solo, &r.lock, &r.drag })
             addAndMakeVisible (c);
     }
 
@@ -133,8 +194,8 @@ Editor::Editor (Processor& p) : AudioProcessorEditor (&p), proc (p)
     dragExport.provider = [this] { return proc.renderMidiFile (true); };
 
     setResizable (true, true);
-    setResizeLimits (900, 620, 2000, 1200);
-    setSize (1100, 760);
+    setResizeLimits (1100, 700, 2400, 1300);
+    setSize (1240, 830);
     syncPattern();
     startTimerHz (30);
 }
@@ -143,6 +204,14 @@ Editor::~Editor()
 {
     stopTimer();
     setLookAndFeel (nullptr);
+}
+
+void Editor::selectEditTrack (int t)
+{
+    t = juce::jlimit (0, kNumTracks - 1, t);
+    noteTrackBox.setSelectedId (t + 1, juce::dontSendNotification);
+    roll.setNewNoteTrack (t);
+    roll.setDrumLabels (t == Rhythm);   // GM drum names on the keys while you work on the drums
 }
 
 void Editor::syncPattern()
@@ -156,13 +225,13 @@ void Editor::syncPattern()
 
 void Editor::updateCounts (const Pattern& p)
 {
-    size_t total = 0;
-    for (int t = 0; t < kNumTracks; ++t)
-    {
-        rows[(size_t) t].count.setText (juce::String (p[(size_t) t].size()), juce::dontSendNotification);
-        total += p[(size_t) t].size();
-    }
-    status.setText (juce::String ((int) total) + " notes", juce::dontSendNotification);
+    lastNotes = countNotes (p);
+    refreshStatus();
+}
+
+void Editor::refreshStatus()
+{
+    status.setText (juce::String ((int) lastNotes) + " notes    " + proc.getLastGenerationSummary(), juce::dontSendNotification);
 }
 
 void Editor::saveMidiAs()
@@ -183,6 +252,8 @@ void Editor::saveMidiAs()
 void Editor::timerCallback()
 {
     if (proc.getPatternVersion() != seenVersion) syncPattern();
+    else refreshStatus();
+    progStrip.setText (juce::String::fromUTF8 (proc.getProgressionText().c_str()), juce::dontSendNotification);
 
     const auto gp = proc.paramsFromState();
     roll.setBars (gp.bars);
@@ -227,12 +298,24 @@ void Editor::resized()
     generateBtn.setBounds (takeLeft (row2, 110));
     previewBtn.setBounds (takeLeft (row2, 90));
     snapBtn.setBounds (takeLeft (row2, 130));
+    sendPcBtn.setBounds (takeLeft (row2, 90));
+    mapBtn.setBounds (takeLeft (row2, 60));
+
+    auto row3 = r.removeFromTop (46); row3.removeFromTop (16);
+    drumStyleBox.setBounds (takeLeft (row3, 190));
+    complexitySlider.setBounds (takeLeft (row3, 190));
+    swingSlider.setBounds (takeLeft (row3, 170));
+    humanizeSlider.setBounds (takeLeft (row3, 170));
+    fillsSlider.setBounds (takeLeft (row3, 170));
+    variantsSlider.setBounds (takeLeft (row3, 110));
 
     r.removeFromTop (4);
     auto scenes = r.removeFromTop (28);
     const int sw = (scenes.getWidth() - 7 * 6) / kNumScenes;
     for (auto& b : sceneBtns) { b.setBounds (scenes.removeFromLeft (sw)); scenes.removeFromLeft (6); }
-    r.removeFromTop (8);
+    r.removeFromTop (4);
+    progStrip.setBounds (r.removeFromTop (22));
+    r.removeFromTop (4);
 
     auto bottom = r.removeFromBottom (34);
     r.removeFromBottom (6);
@@ -240,17 +323,20 @@ void Editor::resized()
     saveBtn.setBounds (takeLeft (bottom, 110));
     status.setBounds (bottom);
 
-    auto left = r.removeFromLeft (270);
+    auto left = r.removeFromLeft (470);
     r.removeFromLeft (8);
     for (int t = 0; t < kNumTracks; ++t)
     {
         auto row = left.removeFromTop (30);
         auto& tr = rows[(size_t) t];
-        tr.name.setBounds (takeLeft (row, 62));
-        tr.channel.setBounds (takeLeft (row, 54));
-        tr.mute.setBounds (takeLeft (row, 40));
-        tr.solo.setBounds (takeLeft (row, 40));
-        tr.count.setBounds (row);
+        auto take = [&row] (int w) { auto c = row.removeFromLeft (w); row.removeFromLeft (4); return c; };
+        tr.name.setBounds (take (58));
+        tr.channel.setBounds (take (54));
+        tr.mute.setBounds (take (40));
+        tr.solo.setBounds (take (40));
+        tr.lock.setBounds (take (40));
+        tr.drag.setBounds (take (44).reduced (0, 2));
+        tr.program.setBounds (row);
     }
 
     auto tools = r.removeFromTop (28);
