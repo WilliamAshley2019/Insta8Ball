@@ -1,6 +1,7 @@
 10-19-2026
 To do add build up and syncopation correlation and more tracks... particularly way of splitting tracks and rythm.  the buildups is something that is important also thought to add specific "effects"  
-tracks rather than just foilage.
+tracks rather than just foilage. Still lots of bufa in rhia... also to create "split" track view or multitrack view rather than overlap.
+Still no intention to integrate a sound engine any time soon.  Need to work on maping the plugin to fl studio flex instruments need to figure out how that works in fl studios native midi player.
 
 10-18-2026 how time flies
 mild theory and fl studio tiein updates still in building still havn't finished building but just updating as it has improved alittle
