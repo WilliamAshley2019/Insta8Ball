@@ -1,3 +1,7 @@
+10-19-2026
+To do add build up and syncopation correlation and more tracks... particularly way of splitting tracks and rythm.  the buildups is something that is important also thought to add specific "effects"  
+tracks rather than just foilage.
+
 10-18-2026 how time flies
 mild theory and fl studio tiein updates still in building still havn't finished building but just updating as it has improved alittle
 I am currently sort of focusing on theory improvements which is sort of going to need to be experiemnting I wanted to add more 
