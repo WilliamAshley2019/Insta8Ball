@@ -1,3 +1,13 @@
+10-22-2026 
+I added FL Studio FSC support so scores can be dragged to and from the plugin. A bunch of other small fixes. It was actually a bit of a rewrite since the last update on github.
+There is actually a design plan for a method of storing the midi file as a type of complex formula that can contain the overall midi file as a representation within the formula.
+This is a way of creating absolute values for midi files rather than representations of the midi file data itself. None the less, the plugin is still working.
+It is musical. I've added the ability to create libraries and transforms and get data from midi files. 
+I have to do some testing of the plugin to get a sense for how it is functioning but this is a structural update from version 1.
+The actual midi files being generated as musical, I may need to improve the theory a bit for genre specific generation, need to give that some thought.
+It will take me a while to use the royalty free midi libraries, to train transforms and see if there are any good sets to train from to get my view of specific genres.
+This will likely take a while so no expected update in the near future as a lot of use and testing needs to ooccur. 
+
 10-19-2026
 To do add build up and syncopation correlation and more tracks... particularly way of splitting tracks and rythm.  the buildups is something that is important also thought to add specific "effects"  
 tracks rather than just foilage. Still lots of bufa in rhia... also to create "split" track view or multitrack view rather than overlap.
