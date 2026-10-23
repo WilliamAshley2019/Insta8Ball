@@ -1,3 +1,7 @@
+OH BTW this plugin is likely to be renamed  Inst8ball or Insta8Ball or Intest8Ball unless I come up with a better name, I just think as the plugin becomes sort of useable I will need to totally not name it Instacomposer Clone to avoid people accidentally mistaking this plugin for instacomposer - although the CLONE should probably be commonsense it is not instacomposer there are people who maybe don't speak English or something not sure but once I figure out how to change the project name I'll likely rename it. Since it also requires updating the source instances it will take some time to do that. The name was never actually on the plugin itself though so not a super high priority but on the todo 
+
+to do get the rename done to Insta8Ball inless I come up with something better before then.
+
 10-22-2026 
 I added FL Studio FSC support so scores can be dragged to and from the plugin. A bunch of other small fixes. It was actually a bit of a rewrite since the last update on github.
 There is actually a design plan for a method of storing the midi file as a type of complex formula that can contain the overall midi file as a representation within the formula.
