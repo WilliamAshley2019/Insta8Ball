@@ -1,6 +1,9 @@
 OH BTW this plugin is likely to be renamed  Inst8ball or Insta8Ball or Intest8Ball unless I come up with a better name, I just think as the plugin becomes sort of useable I will need to totally not name it Instacomposer Clone to avoid people accidentally mistaking this plugin for instacomposer - although the CLONE should probably be commonsense it is not instacomposer there are people who maybe don't speak English or something not sure but once I figure out how to change the project name I'll likely rename it. Since it also requires updating the source instances it will take some time to do that. The name was never actually on the plugin itself though so not a super high priority but on the todo 
 
 to do get the rename done to Insta8Ball inless I come up with something better before then.
+to do after I get the keyboard trainer plugin working --- I might actually aim to take some of that and recycle it into insta8ball as the sound engine using gm and sf sound as FLEX itself is sort of a no go at the moment however maybe I can make a virtual midi connection via virtual midi device to link to a flex instruments????
+to do integrate a channel for python scripting neeed to see if a python channel will be enough to pass python scripts to the plugin not sure but need to figure out the scope of the pyc and py for python in fl imho
+it just makes sense to tap into the fl studio scripting to access the already existing knowledge and resources to manipulate the insta8ball piano roll. 
 
 10-22-2026 
 I added FL Studio FSC support so scores can be dragged to and from the plugin. A bunch of other small fixes. It was actually a bit of a rewrite since the last update on github.
