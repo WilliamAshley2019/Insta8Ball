@@ -71,6 +71,7 @@ Processor::Processor()
       apvts (*this, nullptr, "ICC_STATE", makeLayout())
 {
     bpmParam = apvts.getRawParameterValue (ids::bpm);
+    loadFscTemplate();
 
     apvts.addParameterListener (ids::bars, this);
     apvts.addParameterListener (ids::sendProgram, this);
@@ -180,11 +181,12 @@ void Processor::captureActiveScene()
     s.pattern   = pattern;
 }
 
-void Processor::generate()
+void Processor::generate (uint32_t forceLockMask)
 {
-    const auto gp = paramsFromState();
+    auto gp = paramsFromState();
+    if (useTarget.load()) gp.genre = getProfile (targetProfile.load());
 
-    uint32_t lockMask = 0;
+    uint32_t lockMask = forceLockMask;
     for (int t = 0; t < kNumTracks; ++t)
         if (apvts.getRawParameterValue (ids::lock (t))->load() > 0.5f) lockMask |= 1u << t;
 
@@ -338,6 +340,7 @@ std::string Processor::getMappingText() const
     s += "\n" + describeDrumKeys();
     if (gp.drumStyle >= 0)
         s += "\nDrum style: " + std::string (drumStyleName (gp.drumStyle)) + " (written for about " + std::to_string (drumStyleBpm (gp.drumStyle)) + " BPM)\n";
+    s += "\n" + describeFlexHints().toStdString();
     return s;
 }
 
@@ -417,6 +420,8 @@ void Processor::getStateInformation (juce::MemoryBlock& dest)
         juce::ValueTree icc ("ICC");
         icc.setProperty ("version", 1, nullptr);
         icc.setProperty ("activeScene", activeScene.load(), nullptr);
+        icc.setProperty ("target", targetKey(), nullptr);
+        icc.setProperty ("useTarget", useTarget.load(), nullptr);
         icc.setProperty ("pattern", patternToBase64 (pattern), nullptr);
         paramsToTree (icc, lastParams);
         icc.addChild (scenes.toValueTree(), -1, nullptr);
@@ -462,6 +467,8 @@ void Processor::setStateInformation (const void* data, int size)
             }
             paramsFromTree (icc, lastParams);
             lastParams.bars = barsFromState();
+            selectTargetByName (icc.getProperty ("target").toString());
+            useTarget.store ((bool) icc.getProperty ("useTarget", false) && targetProfile.load() >= 0);
         }
         else
         {

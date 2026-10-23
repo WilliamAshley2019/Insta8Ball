@@ -1,6 +1,7 @@
 #pragma once
 // PluginEditor.h - the whole UI: parameter controls, scenes, track routing, piano roll, MIDI export.
 
+#include "CorpusPanel.h"
 #include "PianoRoll.h"
 #include "PluginProcessor.h"
 
@@ -19,6 +20,7 @@ class DragExport final : public juce::Component
 public:
     std::function<std::vector<uint8_t>()> provider;
     juce::String label { "Drag MIDI into your DAW" };
+    std::function<juce::String()> extension;   // ".mid" when unset, ".fsc" for FL scores
     float fontSize = 13.0f;
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -29,7 +31,7 @@ private:
     bool started = false;
 };
 
-class Editor final : public juce::AudioProcessorEditor, private juce::Timer
+class Editor final : public juce::AudioProcessorEditor, public juce::FileDragAndDropTarget, private juce::Timer
 {
 public:
     explicit Editor (Processor&);
@@ -37,6 +39,9 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void showCorpusTab() { corpusTab.setToggleState (true, juce::dontSendNotification); showTab (true); }
+    bool isInterestedInFileDrag (const juce::StringArray&) override;
+    void filesDropped (const juce::StringArray&, int, int) override;
     void selectEditTrack (int track);   // which track new notes go to; Rhythm also switches the keys to GM drum names
 
 private:
@@ -57,7 +62,8 @@ private:
     juce::Slider   bpmSlider, barsSlider, seedSlider, foliageSlider, complexitySlider, swingSlider, humanizeSlider, fillsSlider, variantsSlider;
     juce::TextButton generateBtn { "Generate" }, diceBtn { "Dice" }, previewBtn { "Preview" }, drawBtn { "Draw" },
                      undoBtn { "Undo" }, redoBtn { "Redo" }, saveBtn { "Save .mid" }, mapBtn { "Map" };
-    juce::ToggleButton snapBtn { "Snap to scale" }, sendPcBtn { "Send PC" };
+    juce::ToggleButton snapBtn { "Snap to scale" }, sendPcBtn { "Send PC" }, fscBtn { "FL score (.fsc)" };
+    void applyFormat();
     juce::ComboBox gridBox, noteTrackBox;
     std::array<juce::Label, 14> captions;
     juce::Label status, progStrip;
@@ -76,6 +82,9 @@ private:
     std::array<TrackRow, kNumTracks> rows;
 
     PianoRoll  roll;
+    CorpusPanel corpusPanel;
+    juce::TextButton composeTab { "Compose" }, corpusTab { "Corpus" };
+    void showTab (bool corpus);
     DragExport dragExport;
     std::unique_ptr<juce::FileChooser> chooser;
 

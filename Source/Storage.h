@@ -44,7 +44,7 @@ bool         patternFromBase64 (const juce::String&, Pattern&);
 
 /** Writes bytes to a uniquely named icc_<uuid>.mid in the temp folder (unique names avoid file
     locking in hosts that keep dropped files open). Returns an invalid File on failure. */
-juce::File writeTempMidiFile (const std::vector<uint8_t>& bytes);
+juce::File writeTempMidiFile (const std::vector<uint8_t>& bytes, const juce::String& extension = ".mid");   // ".fsc" for FL scores
 void       cleanupOldTempMidiFiles (int maxAgeHours = 24);
 
 } // namespace icc

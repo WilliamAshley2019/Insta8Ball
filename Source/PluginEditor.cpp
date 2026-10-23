@@ -23,7 +23,7 @@ void DragExport::paint (juce::Graphics& g)
 void DragExport::mouseDown (const juce::MouseEvent&)
 {
     started = false;
-    file = provider ? writeTempMidiFile (provider()) : juce::File();   // written up-front so the drag starts instantly
+    file = provider ? writeTempMidiFile (provider(), extension ? extension() : juce::String (".mid")) : juce::File();   // written up-front so the drag starts instantly
 }
 
 void DragExport::mouseDrag (const juce::MouseEvent& e)
@@ -70,7 +70,7 @@ void Editor::showMap()
 }
 
 // ------------------------------------------------------------------ Editor
-Editor::Editor (Processor& p) : AudioProcessorEditor (&p), proc (p)
+Editor::Editor (Processor& p) : AudioProcessorEditor (&p), proc (p), corpusPanel (p)
 {
     laf.setColourScheme (juce::LookAndFeel_V4::getMidnightColourScheme());
     setLookAndFeel (&laf);
@@ -130,7 +130,7 @@ Editor::Editor (Processor& p) : AudioProcessorEditor (&p), proc (p)
                                                               &foliageSlider, &generateBtn, &diceBtn, &previewBtn, &snapBtn, &drawBtn,
                                                               &undoBtn, &redoBtn, &gridBox, &noteTrackBox, &saveBtn, &status,
                                                               &roll, &dragExport, &drumStyleBox, &complexitySlider, &swingSlider,
-                                                              &humanizeSlider, &fillsSlider, &variantsSlider, &sendPcBtn, &mapBtn, &progStrip })
+                                                              &humanizeSlider, &fillsSlider, &variantsSlider, &sendPcBtn, &mapBtn, &progStrip, &fscBtn })
         addAndMakeVisible (c);
 
     generateBtn.onClick = [this] { proc.generate(); syncPattern(); };
@@ -181,7 +181,8 @@ Editor::Editor (Processor& p) : AudioProcessorEditor (&p), proc (p)
         r.program.setTooltip ("General MIDI program for this track (sent only when 'Send PC' is on)");
         r.drag.label = "MIDI";
         r.drag.fontSize = 11.0f;
-        r.drag.provider = [this, t] { return proc.renderMidiFile (true, t); };
+        r.drag.provider = [this, t] { return fscBtn.getToggleState() ? proc.renderFsc (t) : proc.renderMidiFile (true, t); };
+        r.drag.extension = [this] { return juce::String (fscBtn.getToggleState() ? ".fsc" : ".mid"); };
         for (auto* c : std::initializer_list<juce::Component*> { &r.name, &r.channel, &r.program, &r.mute, &r.solo, &r.lock, &r.drag })
             addAndMakeVisible (c);
     }
@@ -191,7 +192,22 @@ Editor::Editor (Processor& p) : AudioProcessorEditor (&p), proc (p)
     undoBtn.setEnabled (false);
     redoBtn.setEnabled (false);
 
-    dragExport.provider = [this] { return proc.renderMidiFile (true); };
+    dragExport.provider = [this] { return fscBtn.getToggleState() ? proc.renderFsc (noteTrackBox.getSelectedId() - 1) : proc.renderMidiFile (true); };
+    dragExport.extension = [this] { return juce::String (fscBtn.getToggleState() ? ".fsc" : ".mid"); };
+    fscBtn.onClick = [this] { applyFormat(); };
+    fscBtn.setTooltip ("Save and drag FL Studio score files (.fsc) instead of .mid. A score holds one track: the one chosen in the note-track box (the per-track handles give each track).");
+
+    addChildComponent (corpusPanel);
+    for (auto* b : { &composeTab, &corpusTab })
+    {
+        b->setClickingTogglesState (true);
+        b->setRadioGroupId (77);
+        b->setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff3f7fd9));
+        addAndMakeVisible (*b);
+    }
+    composeTab.setToggleState (true, juce::dontSendNotification);
+    composeTab.onClick = [this] { showTab (false); };
+    corpusTab.onClick  = [this] { showTab (true); };
 
     setResizable (true, true);
     setResizeLimits (1100, 700, 2400, 1300);
@@ -204,6 +220,14 @@ Editor::~Editor()
 {
     stopTimer();
     setLookAndFeel (nullptr);
+}
+
+void Editor::showTab (bool corpus)
+{
+    corpusPanel.setVisible (corpus);
+    corpusPanel.toFront (false);
+    composeTab.toFront (false);
+    corpusTab.toFront (false);
 }
 
 void Editor::selectEditTrack (int t)
@@ -234,8 +258,58 @@ void Editor::refreshStatus()
     status.setText (juce::String ((int) lastNotes) + " notes    " + proc.getLastGenerationSummary(), juce::dontSendNotification);
 }
 
+void Editor::applyFormat()
+{
+    const bool fsc = fscBtn.getToggleState();
+    saveBtn.setButtonText (fsc ? "Save .fsc" : "Save .mid");
+    dragExport.label = fsc ? "Drag FL score (.fsc)" : "Drag MIDI into your DAW";
+    for (auto& r : rows) { r.drag.label = fsc ? "FSC" : "MIDI"; r.drag.repaint(); }
+    dragExport.repaint();
+    if (fsc) status.setText (proc.hasFscTemplate() ? "FSC: the selected note track is written using the layout learned from your FL file."
+                                                   : "FSC: no FL-saved score learned yet (Corpus tab > Learn FSC format). Files use a best-guess layout.", juce::dontSendNotification);
+}
+
+bool Editor::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (const auto& f : files)
+        if (juce::File (f).hasFileExtension ("mid;midi;fsc;icgenre")) return true;
+    return false;
+}
+
+void Editor::filesDropped (const juce::StringArray& files, int, int)
+{
+    for (const auto& path : files)
+    {
+        const juce::File f (path);
+        juce::String msg;
+        if (f.hasFileExtension ("mid;midi"))      msg = proc.importMidiFile (f, 0).message;
+        else if (f.hasFileExtension ("fsc"))      msg = proc.importFscFile (f, noteTrackBox.getSelectedId() - 1).message;
+        else if (f.hasFileExtension ("icgenre"))  { msg = proc.getGenres().importFile (f) ? "Loaded genre " + f.getFileName() : "Not a valid genre file."; corpusPanel.refresh(); }
+        else continue;
+        syncPattern();
+        status.setText (msg, juce::dontSendNotification);
+        return;
+    }
+}
+
 void Editor::saveMidiAs()
 {
+    const bool fsc = fscBtn.getToggleState();
+    const int track = juce::jlimit (0, kNumTracks - 1, noteTrackBox.getSelectedId() - 1);
+    if (fsc)
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Save FL Studio score",
+            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile (juce::String ("ICC ") + trackName (track) + ".fsc"), "*.fsc");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [this, track] (const juce::FileChooser& fc)
+        {
+            const auto f = fc.getResult();
+            if (f == juce::File()) return;
+            const auto bytes = proc.renderFsc (track);
+            status.setText (f.replaceWithData (bytes.data(), bytes.size()) ? "Saved " + f.getFileName() + " (" + trackName (track) + ")" : "Could not write file", juce::dontSendNotification);
+        });
+        return;
+    }
     chooser = std::make_unique<juce::FileChooser> ("Save MIDI file",
         juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("InstaComposerClone.mid"), "*.mid");
     chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
@@ -290,6 +364,12 @@ void Editor::resized()
     progBox.setBounds (takeLeft (row1, 230));
     bpmSlider.setBounds (takeLeft (row1, 240));
     barsSlider.setBounds (takeLeft (row1, 110));
+    {
+        auto tabs = row1.removeFromRight (190);
+        composeTab.setBounds (tabs.removeFromLeft (92)); tabs.removeFromLeft (6);
+        corpusTab.setBounds (tabs.removeFromLeft (92));
+    }
+    corpusPanel.setBounds (getLocalBounds().withTrimmedTop (57));
 
     auto row2 = r.removeFromTop (46); row2.removeFromTop (16);
     seedSlider.setBounds (takeLeft (row2, 170));
@@ -321,6 +401,7 @@ void Editor::resized()
     r.removeFromBottom (6);
     dragExport.setBounds (takeLeft (bottom, 240));
     saveBtn.setBounds (takeLeft (bottom, 110));
+    fscBtn.setBounds (takeLeft (bottom, 130));
     status.setBounds (bottom);
 
     auto left = r.removeFromLeft (470);

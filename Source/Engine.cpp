@@ -1,6 +1,7 @@
 #include "Engine.h"
 #include "Drums.h"
 #include "Phrase.h"
+#include "StyleProfile.h"
 
 #include <algorithm>
 #include <cmath>
@@ -257,7 +258,7 @@ namespace
             DrumSettings ds;
             ds.style = c.p.drumStyle; ds.complexity = c.p.drumComplexity; ds.swing = c.p.swing;
             ds.humanize = c.p.humanize; ds.fills = c.p.fills; ds.bars = c.p.bars;
-            c.drums = generateDrums (ds, c.plan, c.rng);
+            c.drums = c.p.genre ? generateProfileDrums (*c.p.genre, ds, c.plan, c.rng) : generateDrums (ds, c.plan, c.rng);
             c.out[Rhythm] = c.drums.notes;
         }
         c.rhythmOnsets = c.drums.anchors;

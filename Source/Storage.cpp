@@ -109,11 +109,11 @@ void SceneBank::fromValueTree (const juce::ValueTree& tree)
 // ------------------------------------------------------------------ export
 static const juce::String kTempPrefix = "icc_";
 
-juce::File writeTempMidiFile (const std::vector<uint8_t>& bytes)
+juce::File writeTempMidiFile (const std::vector<uint8_t>& bytes, const juce::String& extension)
 {
     cleanupOldTempMidiFiles();
     const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                          .getChildFile (kTempPrefix + juce::Uuid().toString() + ".mid");
+                          .getChildFile (kTempPrefix + juce::Uuid().toString() + extension);
     if (! file.replaceWithData (bytes.data(), bytes.size()))
         return {};
     return file;
@@ -122,10 +122,10 @@ juce::File writeTempMidiFile (const std::vector<uint8_t>& bytes)
 void cleanupOldTempMidiFiles (int maxAgeHours)
 {
     const auto cutoff = juce::Time::getCurrentTime() - juce::RelativeTime::hours ((double) maxAgeHours);
-    for (const auto& f : juce::File::getSpecialLocation (juce::File::tempDirectory)
-                             .findChildFiles (juce::File::findFiles, false, kTempPrefix + "*.mid"))
-        if (f.getLastModificationTime() < cutoff)
-            f.deleteFile();   // age check keeps files another running instance may just have written
+    for (const char* ext : { "*.mid", "*.fsc" })
+        for (const auto& f : juce::File::getSpecialLocation (juce::File::tempDirectory).findChildFiles (juce::File::findFiles, false, kTempPrefix + ext))
+            if (f.getLastModificationTime() < cutoff)
+                f.deleteFile();   // age check keeps files another running instance may just have written
 }
 
 } // namespace icc

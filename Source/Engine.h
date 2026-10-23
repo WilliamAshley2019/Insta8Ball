@@ -8,10 +8,13 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace icc
 {
+
+struct StyleProfile;   // StyleProfile.h
 
 // ---- Data model ----
 struct Note
@@ -61,6 +64,7 @@ struct GenParams
     float    humanize         = 0.3f;    // 0..1
     float    fills            = 0.5f;    // 0..1
     int      candidates       = 1;       // best-of-N (used by generateBest, ignored by generatePattern)
+    std::shared_ptr<const StyleProfile> genre;   // optional trained / built-in profile: drums are sampled from it instead of drumStyle
 };
 
 /** Pure function of its inputs: same params -> identical Pattern, on any machine.

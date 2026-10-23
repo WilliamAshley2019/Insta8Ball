@@ -7,7 +7,9 @@
 //                    (apart from MidiBuffer growth inside the host's own buffer), no parameter writes.
 
 #include "Engine.h"
+#include "GenreLibrary.h"
 #include "Score.h"
+#include "FscFile.h"
 #include "Storage.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -81,7 +83,7 @@ public:
     double    bpmFromState() const;
     int       barsFromState() const;
 
-    void generate();                     // regenerate from the current parameters into the active scene
+    void generate (uint32_t forceLockMask = 0);   // regenerate from the current parameters into the active scene (extra bits lock more tracks)
     void randomizeSeed();
     Pattern getPattern() const;
     void    setPattern (Pattern);        // editor commits (piano roll); stored into the active scene
@@ -105,6 +107,32 @@ public:
     std::string  getProgressionText() const;                 // chord names + roman numerals + cadence
     std::string  getMappingText() const;                     // channel / GM program / FL Studio routing guide
 
+    // ---- v2: MIDI import, style profiles (built-in + trained), restyle. All optional; v1 behaviour without them. ----
+    struct ImportResult { bool ok = false; juce::String message; };
+    ImportResult importMidiFile (const juce::File&, int startBar = 0);   // replaces the active scene's pattern, sets bars and bpm
+
+    int          getNumProfiles() const;                    // built-in styles, then the trained genres
+    juce::String getProfileName (int index) const;
+    bool         isTrainedProfile (int index) const;
+    std::shared_ptr<const StyleProfile> getProfile (int index) const;
+    void         setTargetProfile (int index);              // -1 = none
+    int          getTargetProfile() const noexcept { return targetProfile.load(); }
+    void         setUseTargetForGeneration (bool b) { useTarget.store (b); }
+    bool         getUseTargetForGeneration() const noexcept { return useTarget.load(); }
+    float        getTargetMatch() const;                    // 0..100 for the current drums, -1 without a target / drums
+    juce::String restyleCurrentDrums (float strength);      // moves the Rhythm track toward the target; returns a one-line result
+    GenreLibrary& getGenres() noexcept { return genres; }
+    void         selectTargetByName (const juce::String& key);   // "b:3" built-in, "g:Name" trained; used by state restore
+    juce::String targetKey() const;
+
+    // ---- v2.1: FL Studio scores (.fsc). One score = the notes of one track. The writer copies a real FL-saved score when it has one. ----
+    std::vector<uint8_t> renderFsc (int track) const;
+    bool         learnFscTemplate (const juce::File&);         // a .fsc saved by FL with at least one note; remembered across sessions
+    bool         hasFscTemplate() const;
+    juce::String getFscDiagnosis() const { return lastFscDiagnosis; }   // why the last Learn failed (structure dump)
+    ImportResult importFscFile (const juce::File&, int track); // replaces that track's notes (grows Bars if the score is longer)
+    juce::String describeFlexHints() const;                    // per track: the FLEX browser search word for its GM program
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout makeLayout();
     void parameterChanged (const juce::String&, float) override;
@@ -125,6 +153,15 @@ private:
 
     juce::AudioProcessorValueTreeState apvts;
     std::atomic<float>* bpmParam = nullptr;
+
+    GenreLibrary          genres;
+    mutable juce::CriticalSection fscLock;
+    FscTemplate           fscTemplate = defaultFscTemplate();
+    juce::String          lastFscDiagnosis;
+    void                  loadFscTemplate();
+    static juce::File     fscTemplateFile();
+    std::atomic<int>      targetProfile { -1 };
+    std::atomic<bool>     useTarget { false };
 
     // message-thread data, guarded by dataLock (state calls may arrive from other threads)
     mutable juce::CriticalSection dataLock;
