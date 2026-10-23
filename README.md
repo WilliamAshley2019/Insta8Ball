@@ -1,4 +1,22 @@
-This is NOT instacomposer!!!!!
+10-19-2026
+To do add build up and syncopation correlation and more tracks... particularly way of splitting tracks and rythm.  the buildups is something that is important also thought to add specific "effects"  
+tracks rather than just foilage. Still lots of bufa in rhia... also to create "split" track view or multitrack view rather than overlap.
+Still no intention to integrate a sound engine any time soon.  Need to work on maping the plugin to fl studio flex instruments need to figure out how that works in fl studios native midi player.
+
+10-18-2026 how time flies
+mild theory and fl studio tiein updates still in building still havn't finished building but just updating as it has improved alittle
+I am currently sort of focusing on theory improvements which is sort of going to need to be experiemnting I wanted to add more 
+drum capability, particularly with loading kits direct from midi in fl studio its still not working but started to put that in.
+(Although I am just a little impressed with what this thing is coming up with.... I actually liked the first two things this put out ... out of two well
+well if life hands you lemons dream of other yellow things) cause everyone loves the golden things, golden hair flaxen and playen wax. More to come. :) 
+Well unless the end arrives first :)
+
+
+TO DO - get it to take midi inputs and theorize that input to the transmutation genre extenstion etc.. if possible get midi to feed into from channels... fl studio pianno roll etc.. would likely 
+be doable via ara if fl studio had it but maybe I can figure something out.
+
+
+This is NOT instacomposer!!!!!   (Instacomposer is still way better than this and likely will remain that way :)
 
 This project was inspired by instacomposer and othe programs that can transfer midi data from a plugin to the daw.
 
